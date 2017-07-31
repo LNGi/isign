@@ -14,7 +14,7 @@ from codesig import (Codesig,
                      InfoSlot)
 import logging
 import macho
-from makesig import make_signature
+# from makesig import make_signature
 import os
 import tempfile
 
@@ -26,8 +26,9 @@ class Signable(object):
 
     slot_classes = []
 
-    def __init__(self, path):
+    def __init__(self, bundle, path):
         log.debug("working on {0}".format(path))
+        self.bundle = bundle
         self.path = path
 
         self.f = open(self.path, "rb")
@@ -74,10 +75,11 @@ class Signable(object):
             codesig_data = self.f.read(arch['lc_codesig'].data.datasize)
             # log.debug("codesig len: {0}".format(len(codesig_data)))
         else:
-            log.info("signing from scratch!")
-            entitlements_file = '/Users/neilk/projects/ios-apps/unsigned_entitlements.plist'
-            codesig_data = make_signature(macho, macho_end, arch['cmds'], self.f, entitlements_file)
-            arch['lc_codesig'] = arch['cmds']['LC_CODE_SIGNATURE']
+            raise Exception('At this time, isign cannot sign an unsigned app.')
+            # log.info("signing from scratch!")
+            # entitlements_file = '/path/to/some/entitlements.plist'
+            # codesig_data = make_signature(macho, macho_end, arch['cmds'], self.f, entitlements_file)
+            # arch['lc_codesig'] = arch['cmds']['LC_CODE_SIGNATURE']
 
         arch['codesig'] = Codesig(self, codesig_data)
         arch['codesig_len'] = len(codesig_data)
@@ -104,8 +106,28 @@ class Signable(object):
         offset = cmd.data.dataoff
         return offset, new_codesig_data
 
-    def should_fill_slot(self, slot):
-        return slot.__class__ in self.slot_classes
+    def should_fill_slot(self, codesig, slot):
+        slot_class = slot.__class__
+        if slot_class not in self.slot_classes:
+            # This signable does not have this slot
+            return False
+
+        if slot_class == InfoSlot and not self.bundle.info_props_changed():
+            # No Info.plist changes, don't fill
+            return False
+
+        if slot_class == ApplicationSlot and not codesig.is_sha256_signature():
+            # Application slot only needs to be zeroed out when there's a sha256 layer
+            return False
+
+        return True
+
+    def get_changed_bundle_id(self):
+        # Return a bundle ID to assign if Info.plist's CFBundleIdentifier value was changed
+        if self.bundle.info_prop_changed('CFBundleIdentifier'):
+            return self.bundle.get_info_prop('CFBundleIdentifier')
+        else:
+            return None
 
     def sign(self, app, signer):
         # copy self.f into temp, reset to beginning of file
@@ -131,6 +153,9 @@ class Signable(object):
         macho.MachoFile.build_stream(self.m, temp)
         temp.close()
 
+        # make copy have same permissions
+        mode = os.stat(self.path).st_mode
+        os.chmod(temp.name, mode)
         # log.debug("moving temporary file to {0}".format(self.path))
         os.rename(temp.name, self.path)
 
@@ -146,10 +171,15 @@ class Executable(Signable):
 
 class Dylib(Signable):
     """ A dynamic library that isn't part of its own bundle, e.g.
-        the Swift libraries. """
+        the Swift libraries.
+
+        TODO: Dylibs have an info slot, however the Info.plist is embedded in the __TEXT section
+              of the file (__info_plist) instead of being a seperate file.
+              Add read/write of the embedded Info.plist so we can include InfoSlot below.
+    """
     slot_classes = [EntitlementsSlot,
-                    RequirementsSlot,
-                    InfoSlot]
+                    RequirementsSlot]
+
 
 class Appex(Signable):
     """ An app extension  """

@@ -128,16 +128,23 @@ You can also call it from Python:
 isign command line arguments
 ----------------------------
 
-Synopsis:
-
 .. code::
 
-    isign [-h] [-a <path to applecerts.pem>] 
-               [-c <path to your cert in .pem form>]
-               [-k <path to your key in .pem form>] 
-               [-p <your.mobileprovision>] 
-               [-o <output path>]
-               <path to app to resign>
+  # Resigning by specifying all credentials, input file, and output file
+  $ isign -c /path/to/mycert.pem -k ~/mykey.pem -p path/to/my.mobileprovision \
+          -o resigned.ipa original.ipa
+
+  # Resigning, with credentials under default filenames in ~/.isign - less to type!
+  $ isign -o resigned.ipa original.ipa
+
+  # Modify Info.plist properties in resigned app
+  $ isign -i CFBundleIdentifier=com.example.myapp,CFBundleName=MyApp -o resigned.ipa original.ipa
+
+  # Display Info.plist properties from an app as JSON
+  $ isign -d my.ipa
+
+  # Get help
+  $ isign -h
 
 **-a <path>, --apple-cert <path>**
 
@@ -148,13 +155,34 @@ never need it. In the event that the certificates need to be changed, See the `A
 
 Path to your certificate in PEM format. Defaults to ``$HOME/.isign/certificate.pem``.
 
+**-d, --display**
+
+For the application path, display the information property list (Info.plist) as JSON.
+
 **-h, --help**
 
 Show a help message and exit.
 
+**-i, --info**
+
+While resigning, add or update info in the application's information property list (Info.plist). 
+Takes a comma-separated list of key=value pairs, such as 
+``CFBundleIdentifier=com.example.app,CFBundleName=ExampleApp``. Use with caution!
+See Apple documentation for `valid Info.plist keys <https://developer.apple.com/library/ios/documentation/General/Reference/InfoPlistKeyReference/Introduction/Introduction.html>`_.
+
 **-k <path>, --key <path>**
 
-Path to your private key in PEM format. Defaults to ``$HOME/.isign/key.pwm``.
+Path to your private key in PEM format. Defaults to ``$HOME/.isign/key.pem``.
+
+**-n <directory>, --credentials <directory>**
+
+Equivalent to:
+
+.. code::
+
+   -k <directory>/key.pem 
+   -c <directory>/certificate.pem 
+   -p <directory>/isign.mobileprovision
 
 **-o <path>, --output <path>**
 
@@ -165,11 +193,24 @@ Path to write the re-signed application. Defaults to ``out`` in your current wor
 Path to your provisioning profile. This should be associated with your certificate. Defaults to 
 ``$HOME/.isign/isign.mobileprovision``.
 
+**-v, --verbose**
+
+More verbose logs will be printed to STDERR.
+
+**Application path**
+
+The app to be resigned is specified on the command line after other arguments. The application path is 
+typically an IPA, but can also be a ``.app`` directory or even a zipped ``.app`` directory. When
+resigning, ``isign`` will always create an archive of the same type as the original.
+
 
 .. _Contributing:
 
 Contributing
 ------------
+
+Sauce Labs open source projects have a `Code of Conduct <CONDUCT.md>`__. In short, we try to respect each other, 
+listen, and be helpful.
 
 Development happens on `our Github repository <https://github.com/saucelabs/isign>`__. File an issue, or fork the code!
 
@@ -198,9 +239,6 @@ Sauce Labs supports ongoing public ``isign`` development. ``isign`` is a part of
 for the `iOS Real Device Cloud <https://saucelabs.com/press-room/press-releases/sauce-labs-expands-mobile-test-automation-cloud-with-the-addition-of-real-devices-1>`__,
 which allows customers to test apps and websites on real iOS devices. ``isign`` has been successfully re-signing submitted customer apps in production
 since June 2015.
-
-This project not have an official code of conduct, yet, but one is forthcoming. Please contribute
-to discussion `here <https://github.com/saucelabs/isign/issues/6>`__.
 
 .. _More documentation:
 

@@ -33,6 +33,7 @@ class ApplicationSlot(CodeDirectorySlot):
     def get_hash(self):
         return '\x00' * 20
 
+
 class ResourceDirSlot(CodeDirectorySlot):
     offset = -3
 
@@ -53,21 +54,24 @@ class RequirementsSlot(CodeDirectorySlot):
 class InfoSlot(CodeDirectorySlot):
     offset = -1
 
+    def __init__(self, info_path):
+        self.info_path = info_path
+
     def get_contents(self):
-        # this will probably be similar to ResourceDir slot,
-        # a hash of file contents
-        raise "unimplemented"
+        return open(self.info_path, "rb").read()
 
 
-#
 # Represents a code signature object, aka the LC_CODE_SIGNATURE,
 # within the Signable
-#
 class Codesig(object):
     """ wrapper around construct for code signature """
     def __init__(self, signable, data):
         self.signable = signable
         self.construct = macho_cs.Blob.parse(data)
+        self.is_sha256 = len(self.construct.data.BlobIndex) >= 6
+
+    def is_sha256_signature(self):
+        return self.is_sha256
 
     def build_data(self):
         return macho_cs.Blob.build(self.construct)
@@ -114,6 +118,15 @@ class Codesig(object):
         # we are going to change
         req_blob_0 = requirements.data.BlobIndex[0].blob
         req_blob_0_original_length = req_blob_0.length
+
+        if self.signable.get_changed_bundle_id():
+            # Set the bundle id if it changed
+            try:
+                bundle_struct = req_blob_0.data.expr.data[0].data
+                bundle_struct.data = self.signable.get_changed_bundle_id()
+                bundle_struct.length = len(bundle_struct.data)
+            except Exception:
+                log.debug("could not set bundle id")
 
         try:
             cn = req_blob_0.data.expr.data[1].data[1].data[0].data[2].Data
@@ -163,11 +176,11 @@ class Codesig(object):
         return self.get_codedirectory_hash_index(slot) >= 0
 
     def fill_codedirectory_slot(self, slot):
-        if self.signable.should_fill_slot(slot):
+        if self.signable.should_fill_slot(self, slot):
             index = self.get_codedirectory_hash_index(slot)
             self.get_codedirectory().data.hashes[index] = slot.get_hash()
 
-    def set_codedirectory(self, seal_path, signer):
+    def set_codedirectory(self, seal_path, info_path, signer):
         if self.has_codedirectory_slot(EntitlementsSlot):
             self.fill_codedirectory_slot(EntitlementsSlot(self))
 
@@ -180,9 +193,23 @@ class Codesig(object):
         if self.has_codedirectory_slot(ApplicationSlot):
             self.fill_codedirectory_slot(ApplicationSlot(self))
 
+        if self.has_codedirectory_slot(InfoSlot):
+            self.fill_codedirectory_slot(InfoSlot(info_path))
+
         cd = self.get_codedirectory()
         cd.data.teamID = signer.team_id
-
+        
+        changed_bundle_id = self.signable.get_changed_bundle_id()
+        if changed_bundle_id:
+            offset_change = len(changed_bundle_id) - len(cd.data.ident)
+            cd.data.ident = changed_bundle_id
+            cd.data.hashOffset += offset_change
+            if cd.data.teamIDOffset == None:
+                cd.data.teamIDOffset = offset_change
+            else:
+                cd.data.teamIDOffset += offset_change
+            cd.length += offset_change
+            
         cd.bytes = macho_cs.CodeDirectory.build(cd.data)
         # cd_data = macho_cs.Blob_.build(cd)
         # log.debug(len(cd_data))
@@ -224,7 +251,7 @@ class Codesig(object):
     def resign(self, bundle, signer):
         """ Do the actual signing. Create the structre and then update all the
             byte offsets """
-        if len(self.construct.data.BlobIndex) >= 6:
+        if self.is_sha256_signature():
             # Might be an app signed from Xcode 7.3+ with sha256 stuff
             codedirs = []
             for i, index in enumerate(self.construct.data.BlobIndex):
@@ -234,10 +261,11 @@ class Codesig(object):
             if len(codedirs) == 2:
                 # Remove the sha256 code directory
                 i = codedirs.pop()
-                if len(self.construct.data.BlobIndex) <= i + 1 or self.construct.data.BlobIndex[i + 1].blob.magic != 'CSMAGIC_BLOBWRAPPER':
+                if (len(self.construct.data.BlobIndex) <= i + 1 or
+                        self.construct.data.BlobIndex[i + 1].blob.magic != 'CSMAGIC_BLOBWRAPPER'):
                     # There's no following blobwrapper
                     raise Exception("Could not find blob wrapper!")
-                
+
                 del self.construct.data.BlobIndex[i]
                 removed = 1
                 # CSMAGIC_BLOBWRAPPER is now at index i
@@ -249,7 +277,7 @@ class Codesig(object):
                         removed += 1
 
                 self.construct.data.count -= removed
-                        
+
             elif len(codedirs) > 2:
                 raise Exception("Too many code directories (%d)" % len(codedirs))
 
@@ -260,10 +288,10 @@ class Codesig(object):
             self.set_entitlements(bundle.entitlements_path)
         self.set_requirements(signer)
         # See docs/codedirectory.rst for some notes on optional hashes
-        self.set_codedirectory(bundle.seal_path, signer)
+        self.set_codedirectory(bundle.seal_path, bundle.info_path, signer)
         self.set_signature(signer)
         self.update_offsets()
-        
+
     # TODO make this optional, in case we want to check hashes or something
     # log.debug(hashes)
     # cd = codesig_cons.data.BlobIndex[0].blob.data
